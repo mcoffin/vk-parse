@@ -13,7 +13,8 @@ categories = ["parser-implementations", "rendering::graphics-api"]
 [features]
 serialize = ["serde", "serde_derive"]
 vkxml-convert = ["vkxml"]
-openxr = []
+logging = ["dep:log"]
+openxr = ["logging"]
 
 [dependencies]
 xml-rs = "^0.8"
@@ -21,5 +22,6 @@ xml-rs = "^0.8"
 vkxml = { optional = true, version = "^0.3" }
 serde = { optional = true, version = "^1.0.77" }
 serde_derive = { optional = true, version = "^1.0.77" }
+log = { optional = true, version = "0.4" }
 
 [badges]

@@ -15,6 +15,10 @@ extern crate serde;
 #[cfg(feature = "vkxml-convert")]
 extern crate vkxml;
 
+#[cfg(feature = "openxr")]
+#[macro_use]
+extern crate log;
+
 #[macro_use]
 mod parse;
 mod c;

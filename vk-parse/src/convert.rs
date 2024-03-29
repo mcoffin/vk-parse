@@ -696,10 +696,71 @@ fn process_define_code(r: &mut vkxml::Define, code: String) {
     }
 }
 
+/// checks for pattern
+///
+/// ```c
+/// typedef struct Foo Foo;
+/// ```
+///
+/// used by OpenXR 1.0.33 to resolve circular dependencies between `funcpointer` and `struct`s
+///
+/// > Function pointer prototype for the xrCreateApiLayerInstance function used in place of xrCreateInstance.
+/// > This function allows us to pass special API layer information to each layer during the process of creating an Instance.
+/// > The typedef is embedded to work around circular dependency between XrApiLayerCreateInfo, next and PFN_xrCreateApiLayerInstance
+
 fn parse_type_funcptr(r: &mut vkxml::FunctionPointer, code: &str) {
+    use std::convert::TryFrom;
+    use std::fmt;
+
+    let debug_mode = code.contains("XrApiLayerCreateInfo");
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct ForwardDeclaration<'a> {
+        basetype: &'a str,
+        newtype: &'a str,
+    }
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(transparent)]
+    struct UnexpectedTokenError<'a>(&'a str);
+    impl<'a> fmt::Display for UnexpectedTokenError<'a> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "Unexpected token: {}", self.0)
+        }
+    }
+    impl<'a> std::error::Error for UnexpectedTokenError<'a> {}
+    impl<'a> std::convert::TryFrom<&'a str> for ForwardDeclaration<'a> {
+        type Error = UnexpectedTokenError<'static>;
+        fn try_from(code: &'a str) -> Result<Self, Self::Error> {
+            let code = code.trim();
+            let mut iter = code
+                .split_whitespace()
+                .flat_map(|s| c::TokenIter::new(s));
+            if (&mut iter)
+                .zip(["typedef", "struct"])
+                .take(2)
+                .any(|(a, b)| a != b) {
+                return Err(UnexpectedTokenError(";"));
+            }
+            match (iter.next(), iter.next()) {
+                (Some(fst), Some(snd)) if fst == snd => Ok(ForwardDeclaration {
+                    basetype: fst,
+                    newtype: snd,
+                }),
+                _ => Err(UnexpectedTokenError(";")),
+            }
+        }
+    }
+
     let mut iter = code
         .split_whitespace()
         .flat_map(|s| c::TokenIter::new(s))
+        .map(|v| {
+            if debug_mode {
+                #[cfg(feature = "logging")]
+                debug!("token: {:?}", &v);
+            }
+            v
+        })
         .peekable();
     let token = iter.next().unwrap();
     if token != "typedef" {
@@ -707,6 +768,16 @@ fn parse_type_funcptr(r: &mut vkxml::FunctionPointer, code: &str) {
     }
 
     r.return_type = parse_c_field(&mut iter).unwrap();
+    if let Some(";") = iter.peek().copied() {
+        let (left_code, right_code) = code.split_once(';').unwrap();
+        if let Err(e) = ForwardDeclaration::try_from(left_code) {
+            panic!("{}", &e);
+        }
+
+        #[cfg(feature = "logging")]
+        warn!("dropping (likely) forward-defined type: {:?}\nleft: {:?}\nright: {:?}\n", &r.return_type, left_code, right_code);
+        return parse_type_funcptr(r, right_code);
+    }
 
     let token = iter.next().unwrap();
     if token != "(" {
@@ -716,19 +787,32 @@ fn parse_type_funcptr(r: &mut vkxml::FunctionPointer, code: &str) {
     let token = iter.next().unwrap();
 
     #[cfg(not(feature = "openxr"))]
-    const API_PTR_HINTS: &'static [&'static str] = &[
+    const API_PTR_HINTS: [&'static str; 1] = [
         "VKAPI_PTR"
     ];
     #[cfg(feature = "openxr")]
-    const API_PTR_HINTS: &'static [&'static str] = &[
+    const API_PTR_HINTS: [&'static str; 2] = [
         "VKAPI_PTR",
         "XRAPI_PTR",
     ];
-    if !API_PTR_HINTS.contains(&token) {
-        panic!("Unexpected token {:?}", token);
-    }
+    #[cfg(not(feature = "openxr"))]
+    let token = {
+        if !API_PTR_HINTS.contains(&token) {
+            panic!("Unexpected token {:?}", token);
+        }
+        iter.next().unwrap()
+    };
+    #[cfg(feature = "openxr")]
+    let token = {
+        if !API_PTR_HINTS.contains(&token) {
+            #[cfg(feature = "logging")]
+            warn!("non API_PTR funcpointer: {}", code);
+            token
+        } else {
+            iter.next().unwrap()
+        }
+    };
 
-    let token = iter.next().unwrap();
     if token != "*" {
         panic!("Unexpected token {:?}", token);
     }
