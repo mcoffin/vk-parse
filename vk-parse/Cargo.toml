@@ -13,6 +13,7 @@ categories = ["parser-implementations", "rendering::graphics-api"]
 [features]
 serialize = ["serde", "serde_derive"]
 vkxml-convert = ["vkxml"]
+openxr = []
 
 [dependencies]
 xml-rs = "^0.8"

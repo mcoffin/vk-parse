@@ -317,10 +317,16 @@ impl From<TypesChild> for Option<vkxml::DefinitionsElement> {
                                 TypeCodeMarkup::Name(val) => handle.name = val,
                                 TypeCodeMarkup::Type(val) => {
                                     handle.ty = match val.as_str() {
+                                        // OpenXR only has one _DEFINE_HANDLE, and doesn't
+                                        // differentiate between these handle types in terms of how
+                                        // their types are defined
+                                        #[cfg(feature = "openxr")]
+                                        "XR_DEFINE_HANDLE" | "VK_DEFINE_HANDLE" => vkxml::HandleType::Dispatch,
+                                        #[cfg(not(feature = "openxr"))]
                                         "VK_DEFINE_HANDLE" => vkxml::HandleType::Dispatch,
                                         "VK_DEFINE_NON_DISPATCHABLE_HANDLE" => {
                                             vkxml::HandleType::NoDispatch
-                                        }
+                                        },
                                         _ => panic!("Unexpected handle type: {}", val),
                                     }
                                 }
@@ -708,7 +714,17 @@ fn parse_type_funcptr(r: &mut vkxml::FunctionPointer, code: &str) {
     }
 
     let token = iter.next().unwrap();
-    if token != "VKAPI_PTR" {
+
+    #[cfg(not(feature = "openxr"))]
+    const API_PTR_HINTS: &'static [&'static str] = &[
+        "VKAPI_PTR"
+    ];
+    #[cfg(feature = "openxr")]
+    const API_PTR_HINTS: &'static [&'static str] = &[
+        "VKAPI_PTR",
+        "XRAPI_PTR",
+    ];
+    if !API_PTR_HINTS.contains(&token) {
         panic!("Unexpected token {:?}", token);
     }
 
